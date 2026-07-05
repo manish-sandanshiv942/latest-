@@ -64,12 +64,19 @@ def tri(a: float, b: float, c: float) -> Callable[[float], float]:
 
 
 def trap(a: float, b: float, c: float, d: float) -> Callable[[float], float]:
-    """Trapezoidal membership with corners a<=b<=c<=d (μ=1 on [b,c])."""
+    """Trapezoidal membership with corners a<=b<=c<=d (μ=1 on [b,c]).
+
+    The plateau check runs FIRST so shoulder trapezoids (a==b or c==d) are
+    correct at the exact universe boundary — e.g. trap(0.80,0.90,1.0,1.0)
+    must return 1 (not 0) at x=1.0. Checking ``x >= d`` first silently
+    zeroed the boundary point, a discontinuity caught by Property P2 in
+    validate_formal_properties.py.
+    """
     def mu(x: float) -> float:
-        if x <= a or x >= d:
-            return 0.0
         if b <= x <= c:
             return 1.0
+        if x <= a or x >= d:
+            return 0.0
         return (x - a) / (b - a) if x < b else (d - x) / (d - c)
     return mu
 
@@ -218,6 +225,15 @@ def _build_system() -> MamdaniSystem:
         #     run_facl(), driven by membership in residual_r2="suspicious".
         #     A single competing rule cannot override max-aggregation, so the
         #     guard is the authoritative suppressor (see LEAK_GUARD_ANCHOR).
+        #     The graded support rule below keeps the rule base from going
+        #     EMPTY deep in the suspicious region (R² > 0.84, where no
+        #     low/medium/high term has support). Without it the aggregate
+        #     output vanishes and the ACI cliff-drops to 0 — a discontinuity
+        #     caught by validate_formal_properties.py (Property P2). With it,
+        #     the transition into the leakage region is continuous, and the
+        #     convex guard still pins the full-suspicion limit to the anchor.
+        R([("residual_r2", "suspicious")], "low", 1.0,
+          "GATE 1 support: leakage-suspicious residual → graded pull to low"),
 
         # --- GATE 2: aerosol sign-consistency ------------------------------
         R([("aerosol", "supportive"), ("residual_r2", "medium")], "high", 0.9,
