@@ -77,6 +77,9 @@ def main(argv=None) -> int:
                     help="target miscoverage for the conformal intervals")
     ap.add_argument("--n-bins", type=int, default=4,
                     help="Mondrian regime bins (shared by ACGC and RCA)")
+    ap.add_argument("--tag", default=None,
+                    help="suffix for output filenames (e.g. --tag 1A writes "
+                         "dkasc_results_1A.md) — for multi-array runs")
     args = ap.parse_args(argv)
 
     path = _find_csv(args.csv)
@@ -163,26 +166,28 @@ def main(argv=None) -> int:
 
     # ---- write the results pack ---------------------------------------------
     os.makedirs(RESULTS_DIR, exist_ok=True)
+    sfx = f"_{args.tag}" if args.tag else ""
 
-    rr["regimes"]["matrix"].to_csv(
-        os.path.join(RESULTS_DIR, "rca_regime_importance.csv"))
+    rca_csv = os.path.join(RESULTS_DIR, f"rca_regime_importance{sfx}.csv")
+    rr["regimes"]["matrix"].to_csv(rca_csv)
 
     v = ra["variants"]["acgc"]
+    iv_csv = os.path.join(RESULTS_DIR, f"acgc_intervals{sfx}.csv")
     pd.DataFrame({
         "y_true": ra["y_test"], "driver": ra["driver_test"],
         "yhat_gated": v["yhat"], "lower": v["lower"], "upper": v["upper"],
-    }).to_csv(os.path.join(RESULTS_DIR, "acgc_intervals.csv"), index=False)
+    }).to_csv(iv_csv, index=False)
 
     md = _results_markdown(path, plabel, rated, d, base, res, fz, ra, rr,
                            args.alpha)
-    out_md = os.path.join(RESULTS_DIR, "dkasc_results.md")
+    out_md = os.path.join(RESULTS_DIR, f"dkasc_results{sfx}.md")
     with open(out_md, "w") as f:
         f.write(md)
 
     print(f"Results pack written:\n"
           f"  {out_md}\n"
-          f"  {RESULTS_DIR}/rca_regime_importance.csv\n"
-          f"  {RESULTS_DIR}/acgc_intervals.csv")
+          f"  {rca_csv}\n"
+          f"  {iv_csv}")
     return 0
 
 
