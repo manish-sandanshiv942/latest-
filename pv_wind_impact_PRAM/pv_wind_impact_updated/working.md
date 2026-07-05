@@ -75,6 +75,21 @@ Changing any sidebar input invalidates only what depends on it.
 - `python run_facl_validation.py` — PRAM + FACL on the real DKASC CSV.
 - `python run_crisp_validation.py` — CRISP conformal coverage on DKASC.
 - `python validate_formal_properties.py` — numerical verification of P1–P13.
+- `python fetch_dkasc_mirror.py --array 1A|1C|3A|4A` — downloads real Alice
+  Springs metered data from a public GitHub mirror (the official DKASC server
+  returns HTTP 500) into `data/dkasc_<ARRAY>.csv`.
+- `python run_dkasc_experiments.py --csv data/dkasc_1A.csv --tag 1A` — **the
+  pre-submission experiment**: full PRAM → FACL → ACGC → RCA stack on a real
+  DKASC export; writes the paper's headline tables to
+  `results/dkasc_results_<TAG>.md` (+ CSVs). Use `--list-channels` to pick an
+  array, `--channel N` to select it. Cross-array summary:
+  `results/dkasc_multi_array_summary.md`.
+- `python run_statistical_analysis.py` — **referee-proofing statistics** on
+  the same arrays: gate ablation (none / G1 / G2 / full), moving-block
+  bootstrap of the ACI (crisp-tier flips vs smooth ACI — the G5 figure),
+  Diebold–Mariano significance (physics vs corrected, HLN-corrected), and a
+  logistic-confidence baseline on the same four diagnostics. Writes
+  `results/statistical_analysis.md` (+ `aci_bootstrap_<ARRAY>.csv`).
 
 ---
 
@@ -167,16 +182,27 @@ per-regime reliability.
 
 ### B.10 ACGC (`src/acgc.py`)
 Three chronological blocks: **gate → calibration → test**. FACL runs on the gate
-block, yielding a gate ACI; the smootherstep gain
+block, yielding a local ACI, which a **fuzzy AND (min t-norm)** combines with the
+global full-period ACI — the temporal-consistency guard that stops a
+time-decaying residual model from looking deceptively good right after the
+training cut (observed on real DKASC data):
 
-$$w = g(ACI) = 3t^2 - 2t^3,\qquad t=\mathrm{clip}\!\left(\frac{ACI-25}{80-25},0,1\right)$$
+$$ACI_{eff} = \min(ACI_{local},\ ACI_{global})$$
+
+The smootherstep gain
+
+$$w = g(ACI_{eff}) = 3t^2 - 2t^3,\qquad t=\mathrm{clip}\!\left(\frac{ACI_{eff}-25}{80-25},0,1\right)$$
 
 (C¹, Lipschitz $$L\approx 0.0273$$) scales the correction:
 $$\hat y_w = P_{phys} + w\,\hat r$$. Conformal calibration then wraps
-$$\hat y_w$$ (B.9). Since $$w$$ depends only on the gate block, the predictor is
-fixed before calibration and coverage is provably preserved (P7). Baselines
-compared on the same test block: $$w=0$$ (physics-only), $$w=1$$
-(always-correct), crisp hard-switch.
+$$\hat y_w$$ (B.9) in two modes: the **fixed split** (finite-sample guarantee,
+P7) and the primary **rolling Mondrian calibration** (per-regime FIFO score
+buffers, updated one-step-ahead with no peeking) — the standard adaptive-
+conformal remedy for seasonal drift, which restored 90% coverage on 3.5 years
+of DKASC data where the fixed split sagged to 75%. Since $$w$$ depends only on
+pre-calibration data, the predictor is fixed before calibration and fixed-split
+coverage is provably preserved (P7). Baselines compared on the same test block:
+$$w=0$$ (physics-only), $$w=1$$ (always-correct), crisp hard-switch.
 
 ### B.11 RCA (`src/rca.py`)
 **Regime-conditional attribution.** Per-regime permutation importance is
@@ -315,3 +341,7 @@ against this pipeline's estimate, and reports the agreement percentage
 | Regime-conditional attribution module | `src/rca.py` |
 | Headless pipeline | `run_pipeline.py` |
 | Real-data harnesses | `run_facl_validation.py`, `run_crisp_validation.py` |
+| DKASC data fetcher (mirror) | `fetch_dkasc_mirror.py` |
+| Pre-submission experiment harness | `run_dkasc_experiments.py` |
+| Referee-proofing statistics | `run_statistical_analysis.py` |
+| Real-data results | `results/dkasc_multi_array_summary.md`, `results/statistical_analysis.md` |

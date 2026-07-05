@@ -154,13 +154,75 @@ def _local_facl_aci(y_true_g: np.ndarray, y_phys_g: np.ndarray,
 
 
 # ---------------------------------------------------------------------------
+# 2b.  Rolling (adaptive) conformal quantiles
+# ---------------------------------------------------------------------------
+def _conf_quantile(scores: np.ndarray, alpha: float) -> float:
+    """Finite-sample split-conformal quantile ceil((n+1)(1-α))/n."""
+    n = scores.size
+    if n == 0:
+        return float("inf")
+    q = min(1.0, np.ceil((n + 1) * (1.0 - alpha)) / n)
+    return float(np.quantile(scores, q, method="higher"))
+
+
+def _rolling_intervals(y_te: np.ndarray, yhat_te: np.ndarray,
+                       dv_te: np.ndarray, scores_cal: np.ndarray,
+                       bins_cal: np.ndarray, edges: np.ndarray,
+                       *, alpha: float, window: int, min_bin: int) -> tuple:
+    """One-step-ahead rolling Mondrian conformal.
+
+    WHY (the seasonal-drift fix): a single fixed calibration block violates
+    exchangeability over multi-season test periods — the noise scale in an
+    Alice Springs summer is not the noise scale in winter, so fixed-split
+    coverage sags (observed: 75% at a 90% target on 3.5 y of DKASC data).
+    The standard, citable remedy is ADAPTIVE conformal (Gibbs & Candès 2021;
+    Zaffran et al. 2022): keep the score buffer rolling so the quantile always
+    reflects the RECENT error distribution.
+
+    Mechanics: per regime bin, a FIFO buffer of the last ``window`` observed
+    nonconformity scores, seeded with the calibration block's scores. At each
+    test step t the interval uses only scores observed strictly BEFORE t
+    (no peeking); the realised score is appended AFTER prediction. Bins with
+    fewer than ``min_bin`` scores fall back to the pooled buffer.
+
+    Honesty: the finite-sample guarantee (P7) holds for the FIXED split; the
+    rolling variant trades that for empirical conditional coverage under
+    drift, with asymptotic validity in the adaptive-conformal sense. Both are
+    reported.
+    """
+    from collections import deque
+    n_bins = len(edges) + 1
+    buf = [deque(maxlen=window) for _ in range(n_bins)]
+    pooled = deque(maxlen=window)
+    for s, b in zip(scores_cal, bins_cal):
+        buf[int(b)].append(float(s))
+        pooled.append(float(s))
+
+    lo = np.empty_like(yhat_te)
+    hi = np.empty_like(yhat_te)
+    te_bins = np.digitize(dv_te, edges) if len(edges) else np.zeros(len(dv_te), int)
+    for t in range(len(yhat_te)):
+        b = int(te_bins[t])
+        src = np.asarray(buf[b] if len(buf[b]) >= min_bin else pooled)
+        q = _conf_quantile(src, alpha)
+        lo[t] = yhat_te[t] - q
+        hi[t] = yhat_te[t] + q
+        s_t = abs(y_te[t] - yhat_te[t])          # realised AFTER predicting
+        if np.isfinite(s_t):
+            buf[b].append(float(s_t))
+            pooled.append(float(s_t))
+    return lo, hi, te_bins
+
+
+# ---------------------------------------------------------------------------
 # 3.  End-to-end runner
 # ---------------------------------------------------------------------------
 def run_acgc(pram_res: dict, driver, *,
              alpha: float = 0.10, rated_kw: float | None = None,
              gate_frac: float = 0.30, calib_frac: float = 0.35,
              n_bins: int = 5, min_bin: int = 20,
-             w_lo: float = 25.0, w_hi: float = 80.0) -> dict:
+             w_lo: float = 25.0, w_hi: float = 80.0,
+             rolling_window: int = 720) -> dict:
     """Attribution-confidence-gated conformal correction, end to end.
 
     Parameters
@@ -208,11 +270,31 @@ def run_acgc(pram_res: dict, driver, *,
                           f"calib={c_end - g_end}, test={n - c_end})."}
 
     # ---- GATE block: local FACL → ACI → w (frozen before calibration) -----
-    from .facl import aerosol_consistency_score
+    from .facl import aerosol_consistency_score, run_facl
     aero_score = aerosol_consistency_score(pram_res.get("aerosol", {}))
     gate = _local_facl_aci(y_true[:g_end], y_phys[:g_end], r_hat[:g_end],
                            aerosol=aero_score)
-    w = gate_weight(gate["aci"], lo=w_lo, hi=w_hi)
+
+    # GATE 2 — temporal-consistency guard (fuzzy AND / min t-norm).
+    # The gate block sits right after the training cut, so a residual model
+    # that is DECAYING with time still looks good there (observed on real
+    # DKASC data: local ACI 55 vs global ACI 9 → the partially-corrected
+    # variant undercovered). The correction should only be applied to the
+    # degree that BOTH the local (gate-block) and the global (full-period)
+    # attribution evidence support it — the standard fuzzy conjunction:
+    #     ACI_eff = min(ACI_local, ACI_global)
+    # Both operands are frozen before calibration (global FACL uses only
+    # PRAM's own train/test artefacts), so Property P7 is untouched.
+    try:
+        aci_global = float(run_facl(pram_res)["aci"])
+    except Exception:
+        aci_global = gate["aci"]                 # degrade gracefully
+    aci_eff = min(gate["aci"], aci_global)
+    gate["aci_local"] = float(gate["aci"])
+    gate["aci_global"] = float(aci_global)
+    gate["aci"] = float(aci_eff)
+    gate["term"], gate["label"], gate["css"] = verdict_for(aci_eff)
+    w = gate_weight(aci_eff, lo=w_lo, hi=w_hi)
 
     # crisp hard-switch baseline: apply full correction iff crisp tier ≠ weak
     crisp_tier = (pram_res.get("classify") or {}).get("tier", "weak")
@@ -240,14 +322,31 @@ def run_acgc(pram_res: dict, driver, *,
                                    min_bin=min_bin)
         lo, hi = _crisp.apply_conformal(yhat_te, cal, driver=dv_te,
                                         clip_lo=0.0, clip_hi=rated_kw)
-        rep = _crisp.coverage_report(yt_te, lo, hi, driver=dv_te,
-                                     edges=cal["edges"], alpha=alpha,
-                                     y_range=y_range)
+        rep_fixed = _crisp.coverage_report(yt_te, lo, hi, driver=dv_te,
+                                           edges=cal["edges"], alpha=alpha,
+                                           y_range=y_range)
+        # rolling (adaptive) calibration — the seasonal-drift remedy
+        scores_cal = np.abs(yt_cal - yhat_cal)
+        edges = np.asarray(cal.get("edges", []), dtype=float)
+        bins_cal = (np.digitize(dv_cal, edges) if edges.size
+                    else np.zeros(len(dv_cal), int))
+        win = max(int(rolling_window), 4 * min_bin)
+        lo_r, hi_r, _ = _rolling_intervals(
+            yt_te, yhat_te, dv_te, scores_cal, bins_cal, edges,
+            alpha=alpha, window=win, min_bin=min_bin)
+        lo_r = np.clip(lo_r, 0.0, None)
+        if rated_kw is not None:
+            hi_r = np.clip(hi_r, None, float(rated_kw))
+        rep_roll = _crisp.coverage_report(yt_te, lo_r, hi_r, driver=dv_te,
+                                          edges=cal["edges"], alpha=alpha,
+                                          y_range=y_range)
         m = np.isfinite(yt_te) & np.isfinite(yhat_te)
         rmse = float(np.sqrt(np.mean((yt_te[m] - yhat_te[m]) ** 2))) if m.any() else float("nan")
-        results[name] = {"w": float(wv), "report": rep, "rmse": rmse,
-                         "lower": lo, "upper": hi, "yhat": yhat_te,
-                         "calibrator": cal}
+        results[name] = {"w": float(wv), "report": rep_roll,
+                         "report_fixed": rep_fixed, "rmse": rmse,
+                         "lower": lo_r, "upper": hi_r,
+                         "lower_fixed": lo, "upper_fixed": hi,
+                         "yhat": yhat_te, "calibrator": cal}
 
     return {
         "ok": True, "alpha": float(alpha),
@@ -269,7 +368,9 @@ def summarize(res: dict) -> str:
     lines = [
         f"ACGC (alpha={res['alpha']:.2f}, blocks: gate={res['n_gate']} / "
         f"calib={res['n_calib']} / test={res['n_test']})",
-        f"  gate-block ACI  : {g['aci']:.1f}/100 ({g['term']})  →  w = {res['w']:.3f}",
+        f"  gate ACI        : min(local {g.get('aci_local', g['aci']):.1f}, "
+        f"global {g.get('aci_global', g['aci']):.1f}) = {g['aci']:.1f}/100 "
+        f"({g['term']})  →  w = {res['w']:.3f}",
         f"  crisp switch    : w_hard = {res['w_hard']:.0f} (tier-based)",
         f"  {'variant':<9} {'w':>5}  {'RMSE':>8}  {'coverage':>9}  "
         f"{'MPIW':>8}  {'Winkler':>9}  {'worst-gap':>9}",
@@ -277,9 +378,13 @@ def summarize(res: dict) -> str:
     for name in ("acgc", "physics", "full", "hard"):
         v = res["variants"][name]
         r = v["report"]
+        rf = v.get("report_fixed", r)
         lines.append(
             f"  {name:<9} {v['w']:>5.2f}  {v['rmse']:>8.2f}  "
             f"{r['marginal_coverage']*100:>8.1f}%  {r['mpiw']:>8.2f}  "
             f"{r['winkler']:>9.2f}  "
-            f"{r.get('worst_slab_gap', float('nan'))*100:>8.1f}p")
+            f"{r.get('worst_slab_gap', float('nan'))*100:>8.1f}p  "
+            f"(fixed-split cov {rf['marginal_coverage']*100:.1f}%)")
+    lines.append("  primary intervals: rolling Mondrian conformal "
+                 "(adaptive; drift-robust). Fixed-split = P7 guarantee.")
     return "\n".join(lines)

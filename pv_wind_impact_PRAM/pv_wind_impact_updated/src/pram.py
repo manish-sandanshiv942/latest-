@@ -128,6 +128,43 @@ def build_residual_features(weather: pd.DataFrame,
     if "air_temp" in X:
         t = X["air_temp"].to_numpy(dtype=float)
         X["temp_excess"] = np.clip(t - 25.0, 0.0, None)   # thermal-derate driver
+        t_s = pd.Series(t, index=idx)
+        X["temp_lag1"] = t_s.shift(1).to_numpy()          # thermal inertia
+        X["temp_roll24"] = t_s.rolling(24, min_periods=4).mean().to_numpy()
+
+    # ------------------------------------------------------------------
+    # Soiling / memory features. The DKASC run showed the instantaneous
+    # weather explains almost none of the residual (R² ≈ 0) — because the
+    # dominant physical effects are CUMULATIVE: dust accumulating over dry
+    # spells, persistent cloud regimes, slow thermal drift. These features
+    # give the residual learner that memory.
+    # ------------------------------------------------------------------
+    if "rain" in X:
+        r = pd.to_numeric(X["rain"], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+        wet = r > 0.1                                     # a cleaning event
+        pos = np.arange(len(r))
+        last_wet = np.where(wet, pos, -1)
+        last_wet = np.maximum.accumulate(last_wet)
+        hsr = np.where(last_wet >= 0, pos - last_wet, pos).astype(float)
+        X["hours_since_rain"] = np.minimum(hsr, 24.0 * 30.0)   # soiling proxy
+        r_s = pd.Series(r, index=idx)
+        X["rain_72h"] = r_s.rolling(72, min_periods=1).sum().to_numpy()
+
+    if "humidity" in X:
+        h_s = pd.Series(pd.to_numeric(X["humidity"], errors="coerce")
+                        .to_numpy(dtype=float), index=idx)
+        X["rh_roll24"] = h_s.rolling(24, min_periods=4).mean().to_numpy()
+        if "air_temp" in X:
+            # dew / condensation proxy: humid + cool mornings cement dust
+            X["rh_x_temp"] = (h_s.to_numpy()
+                              * X["air_temp"].to_numpy(dtype=float))
+
+    if "ghi" in X:
+        ghi_s2 = pd.Series(X["ghi"].to_numpy(dtype=float), index=idx)
+        X["ghi_std3"] = ghi_s2.rolling(3, min_periods=2).std().to_numpy()
+        if "clear_sky_index" in X:
+            csi_s = pd.Series(X["clear_sky_index"].to_numpy(dtype=float), index=idx)
+            X["csi_roll24"] = csi_s.rolling(24, min_periods=4).mean().to_numpy()
 
     return X
 

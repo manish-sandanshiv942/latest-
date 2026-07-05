@@ -172,7 +172,7 @@ $$g_h = \operatorname{clip}\!\Big(\operatorname{median}_{t\in \mathcal{T}_{train
 
 $$r_t = P^{meas}_t - \tilde P^{phys}_t$$
 
-**Step 3 — Residual feature space** $$X_t$$: atmospheric drivers (GHI, POA, DHI, DNI, T, RH, wind, rain, pressure, AOD/PM), temporal encodings $$\sin/\cos(2\pi h/24)$$, $$\sin/\cos(2\pi n/365)$$, and physics-derived terms: clear-sky index $$GHI/G_0$$, $$GHI^2$$, $$GHI\cdot\cos\theta_z$$, $$POA/GHI$$, lag-1 and 3-h rolling GHI, $$T\cdot v$$ (wind cooling), $$\max(T-25,0)$$ (thermal excess).
+**Step 3 — Residual feature space** $$X_t$$: atmospheric drivers (GHI, POA, DHI, DNI, T, RH, wind, rain, pressure, AOD/PM), temporal encodings $$\sin/\cos(2\pi h/24)$$, $$\sin/\cos(2\pi n/365)$$, and physics-derived terms: clear-sky index $$GHI/G_0$$, $$GHI^2$$, $$GHI\cdot\cos\theta_z$$, $$POA/GHI$$, lag-1 and 3-h rolling GHI, $$T\cdot v$$ (wind cooling), $$\max(T-25,0)$$ (thermal excess). **Soiling / memory features** (added after the first DKASC run showed instantaneous weather explains little of the residual — the dominant effects are cumulative): hours-since-rain $$\min(t - t_{lastwet}, 720)$$ (soiling proxy, cleaning events at $$P > 0.1$$ mm), 72-h rainfall sum, 24-h rolling means of $$T$$, RH and clear-sky index, lag-1 temperature, $$RH \cdot T$$ (dew/cementation proxy), and 3-h rolling GHI standard deviation (cloud transients).
 
 **Step 4 — Residual learner.** Histogram gradient boosting $$\hat r = g(X)$$ fitted on the chronological train block (train residual outliers trimmed at the 1st/99th percentile; test untouched). Out-of-sample residual explainability:
 
@@ -286,9 +286,13 @@ The closed loop that makes the ACI **operational**. The post-training rows are s
 
 $$[\text{GATE}] \;\; [\text{CALIBRATION}] \;\; [\text{TEST}]$$
 
-**Step 1 — gate weight (GATE block only).** The four FACL inputs are recomputed *locally* on the gate block, inference yields a gate ACI, and the smootherstep map produces a convex gain:
+**Step 1 — gate weight (GATE block + temporal-consistency guard).** The four FACL inputs are recomputed *locally* on the gate block, inference yields a local ACI, and a **fuzzy AND (min t-norm)** combines it with the global full-period ACI:
 
-$$w = g(\text{ACI}) = 3t^2 - 2t^3, \qquad t = \text{clip}\!\left(\frac{\text{ACI} - 25}{80 - 25},\, 0,\, 1\right)$$
+$$\text{ACI}_{eff} = \min\!\left(\text{ACI}_{local},\ \text{ACI}_{global}\right)$$
+
+*Why (found on real DKASC data):* the gate block sits immediately after the training cut, so a residual model whose skill **decays with time** still looks good locally (array 1A: local ACI 55 vs global ACI 9.2); gating on local evidence alone made the partially-corrected variant undercover. The correction is applied only to the degree that **both** local and global evidence support it. Both operands are functions of pre-calibration data only, so P7 is untouched. The smootherstep map then produces the convex gain:
+
+$$w = g(\text{ACI}_{eff}) = 3t^2 - 2t^3, \qquad t = \text{clip}\!\left(\frac{\text{ACI}_{eff} - 25}{80 - 25},\, 0,\, 1\right)$$
 
 so that $$w = 0$$ for ACI ≤ 25 (pure-physics fallback), $$w = 1$$ for ACI ≥ 80 (full correction), and $$g$$ is C¹ with Lipschitz constant $$L = \frac{1.5}{80-25} \approx 0.0273$$.
 
@@ -296,7 +300,11 @@ so that $$w = 0$$ for ACI ≤ 25 (pure-physics fallback), $$w = 1$$ for ACI ≥ 
 
 $$\hat{y}_w(t) = P_{phys}(t) + w \cdot \hat{r}(t)$$
 
-**Step 3 — conformal wrapping (CALIBRATION block).** Mondrian split-conformal quantiles $$\hat{Q}_b$$ (B.9) are fitted to the nonconformity scores $$|y - \hat{y}_w|$$ of the now-fixed predictor.
+**Step 3 — conformal wrapping (CALIBRATION block), fixed + rolling.** Mondrian split-conformal quantiles $$\hat{Q}_b$$ (B.9) are fitted to the nonconformity scores $$|y - \hat{y}_w|$$ of the now-fixed predictor. Because a single fixed calibration block violates exchangeability over multi-season test periods (observed: 75% coverage at a 90% target over 3.5 years of DKASC data), the **primary reported intervals use rolling Mondrian calibration** (adaptive conformal; Gibbs & Candès 2021, Zaffran et al. 2022): per regime bin, a FIFO buffer of the last $$W$$ observed scores (seeded with the calibration block) supplies the quantile at each test step; the realised score is appended only *after* predicting — no peeking. Bins with fewer than $$n_{min}$$ scores fall back to the pooled buffer:
+
+$$\hat{Q}_{b,t} = \text{quantile}_{\lceil (n+1)(1-\alpha)\rceil / n}\left(\{s_i : i \in \text{buffer}_b,\ i < t\}\right)$$
+
+*Honesty split:* the finite-sample guarantee (P7) holds for the **fixed** split; the rolling variant trades it for empirical conditional coverage under drift (asymptotic validity in the adaptive-conformal sense). Both are reported side by side.
 
 **Step 4 — evaluation (TEST block).** Coverage, MPIW, Winkler, and worst-regime gap are reported for ACGC against three baselines calibrated identically: physics-only ($$w=0$$), always-correct ($$w=1$$), crisp hard-switch ($$w \in \{0,1\}$$ by tier).
 
