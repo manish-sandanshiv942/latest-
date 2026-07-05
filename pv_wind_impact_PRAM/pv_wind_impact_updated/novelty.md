@@ -41,9 +41,10 @@ chapter.
 | 5 | **Canonical 100-parameter live pipeline** | Coordinate-driven reconstruction of a 100-feature atmospheric schema from government models | integration/engineering | live NASA POWER / Open-Meteo |
 | 6 | **Dual independent external validation** | The same coordinate cross-checked against **two** independent references (PVGIS + DKASC) | methodological | real |
 | 7 | **ACGC** | The ACI becomes a **control signal**: a smooth gate scales how much residual correction is applied, wrapped in coverage-preserving conformal intervals | **architectural (headline)** | synthetic harness; DKASC run pending |
-| 8 | **Formal characterisation P1–P10** | Ten numerically verified properties of the FACL + ACGC layers, with a runnable suite that caught two real defects | methodological (formal) | `validate_formal_properties.py` (12/12 pass) |
+| 8 | **Formal characterisation P1–P13** | Thirteen numerically verified properties of the FACL + ACGC + RCA layers, with a runnable suite that caught two real defects | methodological (formal) | `validate_formal_properties.py` (15/15 pass) |
+| 9 | **RCA** | **Regime-conditional attribution**: per-regime driver rankings on the SAME Mondrian taxonomy CRISP uses, summarised by a bounded Attribution Instability Index that feeds back into the ACI | **research-tier (attribution)** | synthetic harness (regime flip reproduced); DKASC run pending |
 
-Contributions 1–3 and 7–8 are the **research-tier** novelties (each has its own
+Contributions 1–3 and 7–9 are the **research-tier** novelties (each has its own
 write-up and its own validation harness). Contributions 4–6 are **supporting**
 methodological / integration novelties that strengthen the thesis but should be
 positioned as engineering contributions, not headline research claims.
@@ -321,6 +322,57 @@ which is itself a reportable finding.
 
 ---
 
+## 8. RCA — Regime-Conditional Attribution  *(research-tier novelty #9)*
+`src/rca.py` · verified by `validate_formal_properties.py` (P11–P13) · math in `WORKFLOW_AND_MATHEMATICS.md` §B.12
+
+### What it is
+Every impact ranking elsewhere in the stack is *global* — one table averaged over
+the whole period. But the true driver ranking is **regime-dependent**: clear-sky
+hours are thermal-derate dominated, overcast hours diffuse-fraction dominated.
+RCA computes **per-regime permutation importance using the exact Mondrian
+quantile bins CRISP already uses for conditional coverage** — so uncertainty and
+explanation are conditioned on the *same* physical taxonomy — and compresses the
+cross-regime disagreement into one bounded diagnostic:
+
+**AII (Attribution Instability Index) ∈ [0, 1]** = (1 − mean pairwise
+top-weighted Kendall τ between the per-regime importance vectors) / 2.
+AII = 0 → the ranking is regime-invariant (a global attribution is trustworthy);
+AII → 1 → the rankings systematically reverse (a global attribution is
+misleading). The synthetic harness reproduces the physics: with a
+temperature-dependent high-irradiance derate baked into the truth, RCA correctly
+shows the top driver flipping from GHI to temperature in the top regime.
+
+### The feedback loop (why it strengthens FACL/ACGC rather than adding a bolt-on)
+AII maps through a smootherstep to a **confidence retention factor
+s(AII) ∈ [0.40, 1]**, applied multiplicatively to the ACI:
+`ACI_regime_aware = s(AII) · ACI`. A confidence index that ignores regime
+instability overstates trust in a "global" attribution; RCA makes the ACI honest
+about it — continuously, with the same convex-guard idiom as FACL Gate 1.
+
+### Formal properties (P11–P13, all verified numerically)
+- **P11 boundedness** — AII ∈ [0,1] with the correct ordering on identical /
+  uncorrelated / reversed rankings; s ∈ [floor, 1]; s·ACI stays in [0,100]
+  (FACL's P1 provably survives the composition).
+- **P12 monotone + Lipschitz** — s(·) is non-increasing with advertised modulus
+  1.5·(1−floor)/(severe−benign); empirical constant matches exactly.
+- **P13 permutation invariance** — AII is invariant to relabelling/reordering
+  the feature axis (it measures the ranking, not the bookkeeping).
+
+### Defensible claims
+- "We condition feature attribution on the same Mondrian regime taxonomy used
+  for conformal uncertainty, so explanation and uncertainty share one lens —
+  unreported in the PV literature."
+- "We introduce a bounded, permutation-invariant Attribution Instability Index
+  and close the loop by feeding it into the fuzzy confidence layer with three
+  verified formal properties."
+
+### Claims to avoid
+- That permutation importance, weighted Kendall τ, or quantile binning are new.
+- Reporting DKASC AII numbers before running RCA on the metered data (the
+  synthetic harness passes; the metered benchmark is a pre-submission item).
+
+---
+
 ## 9. How to position this in the dissertation / viva
 
 - **Lead with the three research contributions (PRAM → FACL → CRISP)** as one
@@ -349,4 +401,5 @@ which is itself a reportable finding.
 | 100-param pipeline | `src/data_fetcher.py`, `src/feature_engineering.py` | (read121 §4, §6) | §6.1–6.5 |
 | Dual validation | `src/pvgis.py`, `src/dksac.py` | (read121 §6.13–6.14) | §6.13–6.14 |
 | ACGC | `src/acgc.py` | `NOVELTY.md` (C6), `WORKFLOW_AND_MATHEMATICS.md` §B.11 | §B.11 |
-| Formal properties | `validate_formal_properties.py` | `NOVELTY.md` (C3) | P1–P10 |
+| RCA | `src/rca.py` | `NOVELTY.md` (C7), `WORKFLOW_AND_MATHEMATICS.md` §B.12 | §B.12 |
+| Formal properties | `validate_formal_properties.py` | `NOVELTY.md` (C3) | P1–P13 |

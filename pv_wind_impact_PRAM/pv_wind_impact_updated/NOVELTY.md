@@ -43,6 +43,9 @@ Most PV-XAI and fuzzy-PV papers validate on simulated or reanalysis-driven power
 ### Gap G8 — Attribution confidence is never made **operational**
 Even where XAI quality metrics exist (rank-stability scores, faithfulness metrics), they are reported and then ignored: **no published PV framework feeds a trust-in-attribution signal back into the prediction pipeline as a control variable.** The ML correction is always applied fully or not at all (a crisp switch); no framework applies *as much correction as the attribution evidence warrants*, and none does so while preserving a finite-sample uncertainty guarantee.
 
+### Gap G9 — Attribution is always **global**, never regime-conditional
+Published PV importance rankings are averaged over the whole evaluation period, silently mixing physically distinct operating regimes: clear-sky hours are thermal-derate dominated, overcast hours diffuse-fraction dominated, transition hours mixed. Recent work (2024–2025) examines *seasonal* variation of SHAP values, but **no framework conditions the attribution on the same operating-regime taxonomy used for conditional uncertainty**, quantifies the cross-regime instability of the ranking in a bounded index, or lets that instability moderate the confidence placed in a "global" attribution.
+
 ---
 
 ## 3. The Novelty (what this paper contributes)
@@ -89,6 +92,13 @@ $$\hat{y}_w = P_{phys} + w \cdot \hat{r}, \qquad w = g(\text{ACI}) \in [0,1]$$
 
 where $$g$$ is a C¹ smootherstep with an explicit Lipschitz constant (P8), $$g \equiv 0$$ for ACI ≤ 25 (physics fallback, P9) and $$g \equiv 1$$ for ACI ≥ 80 (full trust, P10). The gated predictor is wrapped in Mondrian split-conformal intervals using a **three-block chronological split (gate → calibration → test)**: the gate weight is a measurable function of the gate block only, so the finite-sample coverage guarantee provably survives the gating (P7 — *coverage preservation*, the paper's one theorem-level result). Evaluated against three baselines on the same held-out block: physics-only (w=0), always-correct (w=1), and the crisp hard-switch. **No published PV framework couples a fuzzy attribution-trust signal to a conformal prediction wrapper as a convex correction gain.**
 
+### Contribution C7 — **RCA: regime-conditional attribution with a bounded instability index** (addresses G9)
+Implemented in `src/rca.py`. Per-regime permutation importance is computed on the held-out test rows **inside the exact Mondrian quantile bins CRISP uses for conditional coverage** — attribution and uncertainty share one physical taxonomy. Cross-regime disagreement is compressed into the **Attribution Instability Index**:
+
+$$\text{AII} = \frac{1 - \bar{\tau}_w}{2} \in [0, 1], \qquad \bar{\tau}_w = \text{mean pairwise top-weighted Kendall } \tau \text{ between regime importance vectors}$$
+
+AII = 0 → the ranking is regime-invariant; AII → 1 → systematically reversed. A smootherstep maps AII to a confidence retention factor $$s(\text{AII}) \in [0.40, 1]$$ applied multiplicatively to the ACI ($$\text{ACI}_{ra} = s \cdot \text{ACI}$$) — a regime-unstable global attribution *continuously loses confidence*, the same convex-guard idiom as Gate 1. Three verified formal properties: **P11** (AII bounded with correct ordering on identical/uncorrelated/reversed rankings; the composed ACI stays in [0,100]), **P12** (s monotone non-increasing with an exact advertised Lipschitz modulus), **P13** (AII invariant to feature relabelling). The synthetic harness reproduces the physics — with a temperature-dependent high-irradiance derate in the truth, the recovered top driver flips from GHI to temperature in the top regime. **No published PV framework conditions attribution on the conformal regime taxonomy or feeds attribution instability back into a confidence layer.**
+
 ### Contribution C5 — Honest dual-mode validation on metered generation
 - **Measured mode:** residual = real DKASC metered power − physics model on on-site weather (genuine ground truth), chronological train/test split, train-only baseline calibration (no leakage).
 - **Cross-source mode:** NASA-POWER-driven vs Open-Meteo-driven physics (model-consistency residual) — used transparently as a *secondary* robustness check, never conflated with measured validation.
@@ -105,8 +115,9 @@ where $$g$$ is a C¹ smootherstep with an explicit Lipschitz constant (P8), $$g 
 | Quantifies confidence *in the attribution* | ❌ | ❌ | ❌ | ❌ | ✅ **ACI (0–100)** |
 | Anti-leakage encoded in inference | ❌ | ❌ | ❌ | ❌ | ✅ **Gate 1** |
 | Physical sign-consistency check | ❌ | ❌ | ❌ | ❌ | ✅ **Gate 2** |
-| Formal properties proved | ❌ | ❌ | ❌ | partial (coverage) | ✅ **P1–P10, runnable suite** |
+| Formal properties proved | ❌ | ❌ | ❌ | partial (coverage) | ✅ **P1–P13, runnable suite** |
 | Confidence-gated correction w/ coverage guarantee | ❌ | ❌ | ❌ | ❌ | ✅ **ACGC** |
+| Regime-conditional attribution + instability index | ❌ | seasonal only | ❌ | ❌ | ✅ **RCA / AII** |
 | Metered-generation validation | rare | rare | some | some | ✅ DKASC |
 | Regime-conditional coverage | ❌ | ❌ | ❌ | partial | ✅ Mondrian CRISP |
 | Auditable rule trace | partial | ❌ | ❌ | ❌ | ✅ |
@@ -115,15 +126,16 @@ where $$g$$ is a C¹ smootherstep with an explicit Lipschitz constant (P8), $$g 
 
 ## 5. What to Add to Reach Q2 (concrete action list)
 
-The codebase already implements C1, C2, C4, C5, C6. To make the paper referee-proof:
+The codebase already implements C1, C2, C4, C5, C6, C7. To make the paper referee-proof:
 
-1. **Formal-properties script — DONE** (`validate_formal_properties.py`): numerically verifies all ten properties P1–P10 (12/12 checks pass). Report as a properties table. **Bonus result for the paper:** the suite *caught two real implementation defects* — (i) an empty-rule-base region above R² ≈ 0.84 where the ACI cliff-dropped to 0, fixed with a graded "suspicious → low" support rule; (ii) a shoulder-trapezoid membership function that returned 0 instead of 1 at the exact universe boundary. Reporting this ("the formal characterisation found and fixed defects a purely empirical evaluation would have missed") is itself a strong argument for Gap G6.
+1. **Formal-properties script — DONE** (`validate_formal_properties.py`): numerically verifies all thirteen properties P1–P13 (15/15 checks pass). Report as a properties table. **Bonus result for the paper:** the suite *caught two real implementation defects* — (i) an empty-rule-base region above R² ≈ 0.84 where the ACI cliff-dropped to 0, fixed with a graded "suspicious → low" support rule; (ii) a shoulder-trapezoid membership function that returned 0 instead of 1 at the exact universe boundary. Reporting this ("the formal characterisation found and fixed defects a purely empirical evaluation would have missed") is itself a strong argument for Gap G6.
 2. **Ablation study:** ACI with (a) no gates, (b) Gate 1 only, (c) Gate 2 only, (d) full FACL — on the same DKASC runs. Show gates change verdicts in exactly the physically-correct cases.
 3. **Baseline comparisons:** (i) legacy crisp classifier, (ii) a logistic-regression "confidence" trained on the same four diagnostics (shows fuzzy transparency ≠ accuracy loss), (iii) raw SHAP rank stability under bootstrap (shows why a confidence layer is needed at all).
 4. **Bootstrap robustness:** resample the test block (block bootstrap, preserves autocorrelation) → distribution of ACI; show the crisp tier flips across bootstrap replicates while the ACI varies smoothly. *This is the killer figure for G5.*
 5. **Multiple DKASC systems / periods:** run ≥ 3 different array technologies (poly-Si, mono-Si, CdTe) and ≥ 2 seasons to demonstrate generality.
 6. **Statistical significance:** Diebold–Mariano test on physics vs physics+residual test errors; report p-values.
 7. **Scope discipline:** frame the paper as **PV-only** (as the title already does). Keep wind as "framework extensibility" in one paragraph — trying to validate both weakens the metered-validation story since DKASC is PV.
+8. **Run RCA and ACGC on the DKASC metered data** (both currently validated on synthetic harnesses): report the per-regime driver rankings, the measured AII, the regime-aware ACI, and the ACGC-vs-baselines interval comparison — these become the headline results tables.
 
 ---
 

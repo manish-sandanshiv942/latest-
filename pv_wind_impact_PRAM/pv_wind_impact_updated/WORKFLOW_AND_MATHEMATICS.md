@@ -306,7 +306,38 @@ $$P\left(y \in \left[\hat{y}_w - \hat{Q}_\alpha,\; \hat{y}_w + \hat{Q}_\alpha\ri
 
 by the standard split-conformal argument (Lei et al. 2018) — the gating provably cannot destroy validity.
 
-**Formal verification.** `validate_formal_properties.py` numerically verifies all ten properties (P1–P6 for FACL; P7–P10 for ACGC); 12/12 checks pass. The suite additionally caught and led to the repair of two implementation defects (an empty-rule-base discontinuity above $$R^2_{res} \approx 0.84$$ and a shoulder-trapezoid boundary bug) — evidence that the formal characterisation has practical teeth.
+**Formal verification.** `validate_formal_properties.py` numerically verifies all thirteen properties (P1–P6 for FACL; P7–P10 for ACGC; P11–P13 for RCA); 15/15 checks pass. The suite additionally caught and led to the repair of two implementation defects (an empty-rule-base discontinuity above $$R^2_{res} \approx 0.84$$ and a shoulder-trapezoid boundary bug) — evidence that the formal characterisation has practical teeth.
+
+---
+
+### B.12 RCA — Regime-Conditional Attribution (`src/rca.py`)
+
+Attribution that changes with the sky. The regime taxonomy is **shared with CRISP**: interior quantile edges on the regime driver (GHI/POA for PV) partition the held-out test rows into bins $$b = 1, \dots, B$$ (undersized bins merged into their neighbour).
+
+**Step 1 — per-regime permutation importance.** Inside each regime $$b$$, permutation importance is computed for the already-trained model (no refitting):
+
+$$I_j^{(b)} = \mathbb{E}\left[\mathcal{L}\left(y^{(b)}, \hat{f}(X^{(b),\,perm(j)})\right)\right] - \mathcal{L}\left(y^{(b)}, \hat{f}(X^{(b)})\right), \qquad S_j^{(b)} = \frac{I_j^{(b)}}{\sum_k I_k^{(b)}}$$
+
+giving an importance-share matrix $$S \in [0,1]^{J \times B}$$ (features × regimes).
+
+**Step 2 — Attribution Instability Index.** Cross-regime disagreement via top-weighted Kendall correlation (rank-1 disagreements weighted most — "did the headline drivers change"):
+
+$$\bar{\tau}_w = \frac{2}{B(B-1)} \sum_{b < b'} \tau_w\!\left(S^{(b)}, S^{(b')}\right), \qquad \text{AII} = \text{clip}\!\left(\frac{1 - \bar{\tau}_w}{2},\, 0,\, 1\right)$$
+
+Identical rankings → $$\tau_w = 1$$ → AII = 0; uncorrelated → AII ≈ 0.5; reversed → AII = 1.
+
+**Step 3 — confidence retention (the FACL coupling).** A smootherstep between the benign anchor $$a_0 = 0.25$$ and the severe anchor $$a_1 = 0.75$$, with floor $$s_{min} = 0.40$$:
+
+$$s(\text{AII}) = 1 - (1 - s_{min})\left(3t^2 - 2t^3\right), \qquad t = \text{clip}\!\left(\frac{\text{AII} - a_0}{a_1 - a_0},\, 0,\, 1\right)$$
+
+$$\text{ACI}_{ra} = s(\text{AII}) \cdot \text{ACI}$$
+
+The same convex-guard idiom as FACL Gate 1: a regime-unstable global attribution loses confidence continuously, never abruptly, and never to zero (degraded, not meaningless).
+
+**Formal properties (verified).**
+- **P11 (boundedness & composition):** AII ∈ [0,1] with the correct ordering on identical/uncorrelated/reversed rankings; $$s \in [s_{min}, 1]$$; $$s \cdot \text{ACI} \in [0, 100]$$ — FACL's P1 survives the composition.
+- **P12 (monotone + Lipschitz):** $$s(\cdot)$$ is non-increasing with exact modulus $$L_s = \frac{1.5\,(1 - s_{min})}{a_1 - a_0} = 1.8$$.
+- **P13 (permutation invariance):** AII is invariant to relabelling/reordering the feature axis.
 
 ---
 
@@ -328,3 +359,4 @@ by the standard split-conformal argument (Lei et al. 2018) — the gating provab
 | $$\hat Q,\ \hat Q_b,\ \Gamma$$ | conformal quantile, per-regime quantile, worst-regime gap | B.9 |
 | $$MPIW,\ PINAW,\ W$$ | interval width metrics, Winkler score | B.9 |
 | $$w,\ g(\cdot),\ \hat{y}_w,\ L$$ | gate weight, smootherstep map, gated predictor, Lipschitz constant | B.11 |
+| $$S_j^{(b)},\ \bar\tau_w,\ \text{AII},\ s(\cdot)$$ | regime importance share, mean weighted Kendall τ, instability index, retention factor | B.12 |

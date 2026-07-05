@@ -54,6 +54,10 @@ each of the 13 tabs in the Streamlit application.
                     │                                    │
                     │                          STAGE 8c  crisp.py
                     │                          Mondrian split-conformal intervals
+                    │                                    │
+                    │                          STAGE 8d  rca.py
+                    │                          per-regime attribution on the SAME
+                    │                          Mondrian bins → AII → s(AII)·ACI
                     ▼                                    ▼
                 ┌───────────────────────────────────────────────┐
                 │        STREAMLIT UI — 13 TABS (Part C)        │
@@ -70,7 +74,7 @@ Changing any sidebar input invalidates only what depends on it.
 - `python run_pipeline.py` — headless CLI (fetch → features → train → report).
 - `python run_facl_validation.py` — PRAM + FACL on the real DKASC CSV.
 - `python run_crisp_validation.py` — CRISP conformal coverage on DKASC.
-- `python validate_formal_properties.py` — numerical verification of P1–P10.
+- `python validate_formal_properties.py` — numerical verification of P1–P13.
 
 ---
 
@@ -174,12 +178,28 @@ fixed before calibration and coverage is provably preserved (P7). Baselines
 compared on the same test block: $$w=0$$ (physics-only), $$w=1$$
 (always-correct), crisp hard-switch.
 
-### B.11 Formal properties (verified by `validate_formal_properties.py`)
+### B.11 RCA (`src/rca.py`)
+**Regime-conditional attribution.** Per-regime permutation importance is
+computed on the held-out test rows inside the **same Mondrian quantile bins**
+CRISP uses (attribution and uncertainty share one taxonomy). Cross-regime
+disagreement is compressed into the bounded **Attribution Instability Index**:
+
+$$\text{AII} = \frac{1-\bar\tau_w}{2} \in [0,1],\qquad \bar\tau_w = \text{mean pairwise top-weighted Kendall }\tau$$
+
+(0 = ranking identical in every regime; 1 = systematically reversed). A
+smootherstep maps AII to a confidence retention factor
+$$s(\text{AII}) \in [0.40, 1]$$, and $$\text{ACI}_{ra} = s\cdot\text{ACI}$$ —
+regime-unstable global attributions lose confidence continuously (the same
+convex-guard idiom as FACL Gate 1).
+
+### B.12 Formal properties (verified by `validate_formal_properties.py`)
 P1 boundedness · P2 continuity (finite modulus even across the leakage gate) ·
 P3 crisp-consistency at the extremes · P4 Gate-1 dominance · P5 sectionwise
 monotonicity · P6 bounded threshold sensitivity · P7 coverage preservation ·
 P8 explicit Lipschitz gate · P9 physics fallback ($$w\equiv 0$$ for ACI ≤ 25) ·
-P10 full-trust limit ($$w\equiv 1$$ for ACI ≥ 80). Current status: **12/12 pass**.
+P10 full-trust limit ($$w\equiv 1$$ for ACI ≥ 80) · P11 AII boundedness &
+composition safety · P12 stability-map monotone + Lipschitz · P13 permutation
+invariance. Current status: **15/15 pass**.
 
 ---
 
@@ -289,8 +309,9 @@ against this pipeline's estimate, and reports the agreement percentage
 | Topic | File |
 |---|---|
 | Novelty claims & honest tiering | `novelty.md` |
-| Q2 gap analysis & contributions C1–C6 | `NOVELTY.md` |
+| Q2 gap analysis & contributions C1–C7 | `NOVELTY.md` |
 | Full equation derivations & symbol table | `WORKFLOW_AND_MATHEMATICS.md` |
-| Formal property suite (P1–P10) | `validate_formal_properties.py` |
+| Formal property suite (P1–P13) | `validate_formal_properties.py` |
+| Regime-conditional attribution module | `src/rca.py` |
 | Headless pipeline | `run_pipeline.py` |
 | Real-data harnesses | `run_facl_validation.py`, `run_crisp_validation.py` |

@@ -31,6 +31,18 @@ reviewable artifact:
     P9  Physics fallback       ACI ≤ w_lo  ⇒  w = 0 exactly
     P10 Full-trust limit       ACI ≥ w_hi  ⇒  w = 1 exactly
 
+  RCA (regime-conditional attribution)
+    P11 AII boundedness + stability-map bounds
+                               AII ∈ [0,1] on identical / uncorrelated /
+                               reversed rankings; s(AII) ∈ [STAB_FLOOR, 1];
+                               composed ACI stays in [0, 100] (P1 survives)
+    P12 Stability-map monotonicity + Lipschitz
+                               s(·) is non-increasing with the advertised
+                               modulus 1.5·(1−floor)/(severe−benign)
+    P13 Permutation invariance AII is unchanged when the feature axis is
+                               relabelled/reordered (attribution stability is
+                               a property of the ranking, not of feature order)
+
 Run:  python validate_formal_properties.py
 Exit code 0 = all properties hold; 1 = at least one violated.
 """
@@ -247,9 +259,88 @@ def check_p8_p9_p10(lo: float = 25.0, hi: float = 80.0):
 
 
 # ---------------------------------------------------------------------------
+# P11/P12/P13 — RCA properties
+# ---------------------------------------------------------------------------
+def check_p11(seed: int = 11):
+    """AII bounded on canonical ranking geometries; stability map bounded;
+    composition with the ACI preserves FACL's P1 bound."""
+    import pandas as pd
+    from src.rca import (attribution_instability, aii_to_stability_weight,
+                         STAB_FLOOR)
+
+    rng = np.random.default_rng(seed)
+    base = rng.uniform(0.0, 1.0, 40)
+
+    def _inst(cols):
+        M = pd.DataFrame(np.column_stack(cols),
+                         index=[f"f{i}" for i in range(len(cols[0]))],
+                         columns=[f"regime_{i}" for i in range(len(cols))])
+        return attribution_instability({"ok": True, "matrix": M})["aii"]
+
+    aii_same = _inst([base, base, base])                    # identical
+    aii_rand = float(np.mean([_inst([rng.permutation(base),
+                                     rng.permutation(base)])
+                              for _ in range(30)]))          # uncorrelated
+    rev = base.max() + base.min() - base                     # reversed
+    aii_rev = _inst([base, rev])
+    ok_order = aii_same <= 0.05 and aii_same < aii_rand < aii_rev and aii_rev >= 0.9
+    ok_bounds = all(0.0 <= a <= 1.0 for a in (aii_same, aii_rand, aii_rev))
+    # stability map bounds + ACI composition stays in [0,100]
+    ss = np.array([aii_to_stability_weight(a) for a in np.linspace(0, 1, 2001)])
+    ok_s = bool(np.all((ss >= STAB_FLOOR - 1e-12) & (ss <= 1.0 + 1e-12)))
+    comp = np.array([s * aci for s in (ss.min(), ss.max())
+                     for aci in (0.0, 50.0, 100.0)])
+    ok_comp = bool(np.all((comp >= 0.0) & (comp <= 100.0)))
+    record("P11 AII boundedness", ok_order and ok_bounds and ok_s and ok_comp,
+           f"AII: identical={aii_same:.3f} < uncorrelated≈{aii_rand:.3f} < "
+           f"reversed={aii_rev:.3f}; s∈[{ss.min():.2f},{ss.max():.2f}]"
+           f"⊆[{STAB_FLOOR},1]; s·ACI ⊆ [0,100]")
+
+
+def check_p12():
+    """Stability map is monotone non-increasing with the advertised modulus."""
+    from src.rca import aii_to_stability_weight, STAB_FLOOR, AII_BENIGN, AII_SEVERE
+
+    xs = np.linspace(0.0, 1.0, 100001)
+    ss = np.array([aii_to_stability_weight(x) for x in xs])
+    dif = np.diff(ss)
+    mono = bool(np.all(dif <= 1e-12))
+    L_emp = float(np.max(np.abs(dif) / np.diff(xs)))
+    L_adv = 1.5 * (1.0 - STAB_FLOOR) / (AII_SEVERE - AII_BENIGN)
+    ok = mono and L_emp <= L_adv + 1e-9
+    record("P12 stability-map monotone+Lipschitz", ok,
+           f"non-increasing: {mono}; empirical L = {L_emp:.4f} ≤ advertised "
+           f"1.5·(1−floor)/(severe−benign) = {L_adv:.4f}")
+
+
+def check_p13(seed: int = 13, tol: float = 1e-9):
+    """AII is invariant to relabelling/reordering the feature axis."""
+    import pandas as pd
+    from src.rca import attribution_instability
+
+    rng = np.random.default_rng(seed)
+    n_feat, n_reg = 30, 4
+    M = rng.uniform(0.0, 1.0, (n_feat, n_reg))
+    idx = [f"f{i}" for i in range(n_feat)]
+    cols = [f"regime_{j}" for j in range(n_reg)]
+    base = attribution_instability(
+        {"ok": True, "matrix": pd.DataFrame(M, index=idx, columns=cols)})["aii"]
+    worst = 0.0
+    for _ in range(10):
+        p = rng.permutation(n_feat)
+        aii_p = attribution_instability(
+            {"ok": True, "matrix": pd.DataFrame(M[p], index=[idx[i] for i in p],
+                                                columns=cols)})["aii"]
+        worst = max(worst, abs(aii_p - base))
+    ok = worst <= tol
+    record("P13 permutation invariance", ok,
+           f"max |ΔAII| over 10 random feature reorderings = {worst:.2e}")
+
+
+# ---------------------------------------------------------------------------
 def main() -> int:
     print("=" * 72)
-    print("Formal-property verification suite (P1–P10)")
+    print("Formal-property verification suite (P1–P13)")
     print("=" * 72)
     check_p1()
     check_p2()
@@ -259,6 +350,9 @@ def main() -> int:
     check_p6()
     check_p7()
     check_p8_p9_p10()
+    check_p11()
+    check_p12()
+    check_p13()
     print("-" * 72)
     n_fail = sum(1 for _, s, _ in _results if s == FAIL)
     print(f"{len(_results) - n_fail}/{len(_results)} checks passed.")
