@@ -40,9 +40,11 @@ chapter.
 | 4 | **Secondary (two-level) impact analysis** | Ranks *conversion-efficiency* modulators after normalising out the first-order driver | methodological | live + modelled |
 | 5 | **Canonical 100-parameter live pipeline** | Coordinate-driven reconstruction of a 100-feature atmospheric schema from government models | integration/engineering | live NASA POWER / Open-Meteo |
 | 6 | **Dual independent external validation** | The same coordinate cross-checked against **two** independent references (PVGIS + DKASC) | methodological | real |
+| 7 | **ACGC** | The ACI becomes a **control signal**: a smooth gate scales how much residual correction is applied, wrapped in coverage-preserving conformal intervals | **architectural (headline)** | synthetic harness; DKASC run pending |
+| 8 | **Formal characterisation P1–P10** | Ten numerically verified properties of the FACL + ACGC layers, with a runnable suite that caught two real defects | methodological (formal) | `validate_formal_properties.py` (12/12 pass) |
 
-Contributions 1–3 are the **research-tier** novelties (each has its own write-up
-and its own real-data validation harness). Contributions 4–6 are **supporting**
+Contributions 1–3 and 7–8 are the **research-tier** novelties (each has its own
+write-up and its own validation harness). Contributions 4–6 are **supporting**
 methodological / integration novelties that strengthen the thesis but should be
 positioned as engineering contributions, not headline research claims.
 
@@ -262,7 +264,64 @@ against measurement" — only DKASC is metered truth.
 
 ---
 
-## 7. How to position this in the dissertation / viva
+## 7. ACGC — Attribution-Confidence-Gated Conformal correction  *(headline architectural novelty)*
+`src/acgc.py` · verified by `validate_formal_properties.py` · math in `WORKFLOW_AND_MATHEMATICS.md` §B.11
+
+### What it is
+Everywhere else in the stack, the ACI is *descriptive* — a number in a report.
+ACGC makes it **operational**: the confidence in the attribution decides **how
+much of PRAM's learned residual correction is actually applied** to the physics
+prediction:
+
+`ŷ_w = P_physics + w · r̂`,  where `w = g(ACI) ∈ [0, 1]`
+
+`g` is a C¹ smootherstep with an explicit Lipschitz constant: `w = 0` for
+ACI ≤ 25 (pure-physics fallback — an untrusted correction is *not applied*),
+`w = 1` for ACI ≥ 80 (full trust), smooth in between. The gated predictor is then
+wrapped in Mondrian split-conformal intervals over a **three-block chronological
+split (gate → calibration → test)**.
+
+### Why it is the headline (the reportable part)
+1. **Closes the loop no published PV framework closes.** XAI-quality metrics, when
+   they exist at all, are reported and ignored; the ML correction in hybrid
+   physics-ML pipelines is always applied fully or not at all. ACGC applies *as
+   much correction as the attribution evidence warrants* — the trust signal
+   becomes a convex control gain.
+2. **Coverage preservation is provable (the one theorem-level claim).** Because
+   `w` is a measurable function of the *gate block only*, the predictor is fixed
+   before calibration, so the standard split-conformal argument goes through
+   unchanged: the finite-sample coverage guarantee **survives the gating** (P7).
+3. **Benchmarked against the right baselines** on the same held-out block:
+   physics-only (`w=0`), always-correct (`w=1`), and the crisp hard-switch
+   (`w ∈ {0,1}` by tier) — coverage, MPIW, Winkler score, worst-regime gap.
+
+### Formal characterisation (contribution 8, inseparable from 7)
+Ten properties — P1 boundedness, P2 continuity, P3 crisp-consistency, P4 Gate-1
+dominance, P5 sectionwise monotonicity, P6 bounded threshold sensitivity (FACL);
+P7 coverage preservation, P8 explicit Lipschitz gate, P9 physics fallback,
+P10 full-trust limit (ACGC) — all verified numerically by
+`validate_formal_properties.py` (**12/12 checks pass**). The suite **caught two
+real implementation defects** (an empty-rule-base ACI cliff above residual
+R² ≈ 0.84, and a shoulder-trapezoid membership returning 0 at the exact universe
+boundary), both since fixed — evidence that the formal layer has practical teeth,
+which is itself a reportable finding.
+
+### Defensible claims
+- "We introduce a confidence-gated correction in which a fuzzy
+  attribution-confidence index continuously scales a physics-residual correction,
+  and we prove the split-conformal coverage guarantee is preserved under gating."
+- "A runnable formal-property suite (P1–P10) both characterises the layer and
+  exposed two implementation defects that purely empirical evaluation missed."
+
+### Claims to avoid
+- That smootherstep, split conformal, or Mamdani inference are individually new.
+- Reporting DKASC ACGC numbers before actually running the DKASC comparison
+  (the synthetic harness passes; the metered-data benchmark is the remaining
+  experiment before submission).
+
+---
+
+## 9. How to position this in the dissertation / viva
 
 - **Lead with the three research contributions (PRAM → FACL → CRISP)** as one
   coherent stack: *explain the physics error → grade trust in that explanation →
@@ -279,7 +338,7 @@ against measurement" — only DKASC is metered truth.
   (`run_facl_validation.py`, `run_crisp_validation.py`) — run them live if asked;
   every number in this document is traceable to that code.
 
-## 8. Pointers
+## 10. Pointers
 
 | Contribution | Code | Write-up | Math (read121.md) |
 |---|---|---|---|
@@ -289,3 +348,5 @@ against measurement" — only DKASC is metered truth.
 | Secondary impact | `src/impact_analysis.py` | (read121 §6.10) | §6.10 |
 | 100-param pipeline | `src/data_fetcher.py`, `src/feature_engineering.py` | (read121 §4, §6) | §6.1–6.5 |
 | Dual validation | `src/pvgis.py`, `src/dksac.py` | (read121 §6.13–6.14) | §6.13–6.14 |
+| ACGC | `src/acgc.py` | `NOVELTY.md` (C6), `WORKFLOW_AND_MATHEMATICS.md` §B.11 | §B.11 |
+| Formal properties | `validate_formal_properties.py` | `NOVELTY.md` (C3) | P1–P10 |
