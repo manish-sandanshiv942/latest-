@@ -64,10 +64,30 @@ def importance_bar(imp: pd.DataFrame, color: str, title: str,
 
 
 def grouped_donut(grp: pd.DataFrame, title: str):
-    """Donut chart of importance rolled up by physical category."""
+    """Donut chart of importance rolled up by physical category.
+
+    Guard: if every share is zero (degenerate model run — e.g. constant
+    predictions give all-zero permutation importance), matplotlib's ``pie``
+    raises ``ValueError: All wedge sizes are zero``. Render an informative
+    placeholder instead of crashing the whole tab.
+    """
     fig, ax = plt.subplots(figsize=(5.2, 4.6))
-    shares = grp["Share"].to_numpy() * 100
-    labels = grp["Category"].to_numpy()
+    shares = grp["Share"].to_numpy(dtype=float) * 100 if len(grp) else np.array([])
+    shares = np.nan_to_num(shares, nan=0.0, posinf=0.0, neginf=0.0)
+    labels = grp["Category"].to_numpy() if len(grp) else np.array([])
+
+    if shares.size == 0 or shares.sum() <= 0:
+        ax.text(0.5, 0.5,
+                "No impact signal for this run\n"
+                "(all importances are zero — try more data\n"
+                "or a different model)",
+                ha="center", va="center", fontsize=9, color="gray",
+                transform=ax.transAxes)
+        ax.set_axis_off()
+        ax.set_title(title)
+        fig.tight_layout()
+        return fig
+
     palette = plt.cm.tab20(np.linspace(0, 1, len(labels)))
     wedges, _ = ax.pie(shares, colors=palette, startangle=90,
                        wedgeprops=dict(width=0.42, edgecolor="white"))
