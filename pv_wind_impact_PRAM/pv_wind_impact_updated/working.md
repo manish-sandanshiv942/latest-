@@ -75,6 +75,10 @@ Changing any sidebar input invalidates only what depends on it.
 - `python run_facl_validation.py` — PRAM + FACL on the real DKASC CSV.
 - `python run_crisp_validation.py` — CRISP conformal coverage on DKASC.
 - `python validate_formal_properties.py` — numerical verification of P1–P13.
+- `python run_dkasc_experiments.py` — **the pre-submission experiment**: full
+  PRAM → FACL → ACGC → RCA stack on a real DKASC export; writes the paper's
+  headline tables to `results/dkasc_results.md` (+ CSVs). Use
+  `--list-channels` to pick an array, `--channel N` to select it.
 
 ---
 

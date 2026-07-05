@@ -135,7 +135,7 @@ The codebase already implements C1, C2, C4, C5, C6, C7. To make the paper refere
 5. **Multiple DKASC systems / periods:** run ≥ 3 different array technologies (poly-Si, mono-Si, CdTe) and ≥ 2 seasons to demonstrate generality.
 6. **Statistical significance:** Diebold–Mariano test on physics vs physics+residual test errors; report p-values.
 7. **Scope discipline:** frame the paper as **PV-only** (as the title already does). Keep wind as "framework extensibility" in one paragraph — trying to validate both weakens the metered-validation story since DKASC is PV.
-8. **Run RCA and ACGC on the DKASC metered data** (both currently validated on synthetic harnesses): report the per-regime driver rankings, the measured AII, the regime-aware ACI, and the ACGC-vs-baselines interval comparison — these become the headline results tables.
+8. **Run RCA and ACGC on the DKASC metered data — HARNESS DONE, awaiting real CSV** (`run_dkasc_experiments.py`): a headless runner that executes the full PRAM → FACL → ACGC → RCA stack on a downloaded DKASC export and writes the paper's headline tables to `results/dkasc_results.md` (plus `rca_regime_importance.csv` and `acgc_intervals.csv`). Verified end-to-end on a DKASC-format smoke CSV; the only remaining step is downloading a real Alice Springs export (free, https://dkasolarcentre.com.au/download) into `data/` and running `python run_dkasc_experiments.py` — then repeating with `--channel` for ≥ 3 array technologies (item 5).
 
 ---
 
