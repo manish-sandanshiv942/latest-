@@ -171,16 +171,27 @@ per-regime reliability.
 
 ### B.10 ACGC (`src/acgc.py`)
 Three chronological blocks: **gate → calibration → test**. FACL runs on the gate
-block, yielding a gate ACI; the smootherstep gain
+block, yielding a local ACI, which a **fuzzy AND (min t-norm)** combines with the
+global full-period ACI — the temporal-consistency guard that stops a
+time-decaying residual model from looking deceptively good right after the
+training cut (observed on real DKASC data):
 
-$$w = g(ACI) = 3t^2 - 2t^3,\qquad t=\mathrm{clip}\!\left(\frac{ACI-25}{80-25},0,1\right)$$
+$$ACI_{eff} = \min(ACI_{local},\ ACI_{global})$$
+
+The smootherstep gain
+
+$$w = g(ACI_{eff}) = 3t^2 - 2t^3,\qquad t=\mathrm{clip}\!\left(\frac{ACI_{eff}-25}{80-25},0,1\right)$$
 
 (C¹, Lipschitz $$L\approx 0.0273$$) scales the correction:
 $$\hat y_w = P_{phys} + w\,\hat r$$. Conformal calibration then wraps
-$$\hat y_w$$ (B.9). Since $$w$$ depends only on the gate block, the predictor is
-fixed before calibration and coverage is provably preserved (P7). Baselines
-compared on the same test block: $$w=0$$ (physics-only), $$w=1$$
-(always-correct), crisp hard-switch.
+$$\hat y_w$$ (B.9) in two modes: the **fixed split** (finite-sample guarantee,
+P7) and the primary **rolling Mondrian calibration** (per-regime FIFO score
+buffers, updated one-step-ahead with no peeking) — the standard adaptive-
+conformal remedy for seasonal drift, which restored 90% coverage on 3.5 years
+of DKASC data where the fixed split sagged to 75%. Since $$w$$ depends only on
+pre-calibration data, the predictor is fixed before calibration and fixed-split
+coverage is provably preserved (P7). Baselines compared on the same test block:
+$$w=0$$ (physics-only), $$w=1$$ (always-correct), crisp hard-switch.
 
 ### B.11 RCA (`src/rca.py`)
 **Regime-conditional attribution.** Per-regime permutation importance is
