@@ -280,6 +280,36 @@ with the empirical finding that Mondrian shrinks $$\Gamma$$ versus the global ca
 
 ---
 
+### B.11 ACGC — Attribution-Confidence-Gated Conformal correction (`src/acgc.py`)
+
+The closed loop that makes the ACI **operational**. The post-training rows are split chronologically into three blocks:
+
+$$[\text{GATE}] \;\; [\text{CALIBRATION}] \;\; [\text{TEST}]$$
+
+**Step 1 — gate weight (GATE block only).** The four FACL inputs are recomputed *locally* on the gate block, inference yields a gate ACI, and the smootherstep map produces a convex gain:
+
+$$w = g(\text{ACI}) = 3t^2 - 2t^3, \qquad t = \text{clip}\!\left(\frac{\text{ACI} - 25}{80 - 25},\, 0,\, 1\right)$$
+
+so that $$w = 0$$ for ACI ≤ 25 (pure-physics fallback), $$w = 1$$ for ACI ≥ 80 (full correction), and $$g$$ is C¹ with Lipschitz constant $$L = \frac{1.5}{80-25} \approx 0.0273$$.
+
+**Step 2 — gated predictor.**
+
+$$\hat{y}_w(t) = P_{phys}(t) + w \cdot \hat{r}(t)$$
+
+**Step 3 — conformal wrapping (CALIBRATION block).** Mondrian split-conformal quantiles $$\hat{Q}_b$$ (B.9) are fitted to the nonconformity scores $$|y - \hat{y}_w|$$ of the now-fixed predictor.
+
+**Step 4 — evaluation (TEST block).** Coverage, MPIW, Winkler, and worst-regime gap are reported for ACGC against three baselines calibrated identically: physics-only ($$w=0$$), always-correct ($$w=1$$), crisp hard-switch ($$w \in \{0,1\}$$ by tier).
+
+**Proposition (P7, coverage preservation).** Because $$w$$ is a measurable function of the gate block alone, the predictor $$\hat{y}_w$$ is fixed before calibration; if the calibration and test scores are exchangeable, then
+
+$$P\left(y \in \left[\hat{y}_w - \hat{Q}_\alpha,\; \hat{y}_w + \hat{Q}_\alpha\right]\right) \geq 1 - \alpha$$
+
+by the standard split-conformal argument (Lei et al. 2018) — the gating provably cannot destroy validity.
+
+**Formal verification.** `validate_formal_properties.py` numerically verifies all ten properties (P1–P6 for FACL; P7–P10 for ACGC); 12/12 checks pass. The suite additionally caught and led to the repair of two implementation defects (an empty-rule-base discontinuity above $$R^2_{res} \approx 0.84$$ and a shoulder-trapezoid boundary bug) — evidence that the formal characterisation has practical teeth.
+
+---
+
 ## Part C — Symbol Table
 
 | Symbol | Meaning | Where |
@@ -297,3 +327,4 @@ with the empirical finding that Mondrian shrinks $$\Gamma$$ versus the global ca
 | $$\mu_{susp},\ A$$ | leakage suspicion, guard anchor (28) | B.8 |
 | $$\hat Q,\ \hat Q_b,\ \Gamma$$ | conformal quantile, per-regime quantile, worst-regime gap | B.9 |
 | $$MPIW,\ PINAW,\ W$$ | interval width metrics, Winkler score | B.9 |
+| $$w,\ g(\cdot),\ \hat{y}_w,\ L$$ | gate weight, smootherstep map, gated predictor, Lipschitz constant | B.11 |

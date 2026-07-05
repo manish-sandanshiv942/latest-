@@ -40,6 +40,9 @@ Soft-computing papers in energy typically present a rule base and empirical resu
 ### Gap G7 — Validation on **real metered generation** is rare; conditional coverage is rarer
 Most PV-XAI and fuzzy-PV papers validate on simulated or reanalysis-driven power. Conformal prediction has reached PV point-forecasting (2024–2026), but **regime-conditional (Mondrian) coverage on real metered data, coupled to the attribution layer**, has not been reported.
 
+### Gap G8 — Attribution confidence is never made **operational**
+Even where XAI quality metrics exist (rank-stability scores, faithfulness metrics), they are reported and then ignored: **no published PV framework feeds a trust-in-attribution signal back into the prediction pipeline as a control variable.** The ML correction is always applied fully or not at all (a crisp switch); no framework applies *as much correction as the attribution evidence warrants*, and none does so while preserving a finite-sample uncertainty guarantee.
+
 ---
 
 ## 3. The Novelty (what this paper contributes)
@@ -79,6 +82,13 @@ $$\text{ACI} = F(\text{improvement}, R^2_{res}, s_{aero}, \Delta_{bias}) : \math
 ### Contribution C4 — Confidence-coupled conditional uncertainty (addresses G7)
 The CRISP layer (Mondrian split-conformal intervals, regimes indexed by the very irradiance driver the attribution ranks) is reported **jointly** with FACL: the paper shows that periods/regimes with high ACI coincide with regimes where the physics-residual predictor achieves the tightest calibrated intervals, and that Mondrian binning shrinks the **worst-regime coverage gap** versus a global conformal quantile on real metered data. This closes the loop: *attribution → confidence in attribution → guaranteed uncertainty on the corrected prediction.*
 
+### Contribution C6 — **ACGC: the confidence signal becomes a control signal** (addresses G8) — *the headline architectural novelty*
+Implemented in `src/acgc.py`. The ACI is no longer descriptive metadata — it operationally decides **how much of the learned residual correction is applied**:
+
+$$\hat{y}_w = P_{phys} + w \cdot \hat{r}, \qquad w = g(\text{ACI}) \in [0,1]$$
+
+where $$g$$ is a C¹ smootherstep with an explicit Lipschitz constant (P8), $$g \equiv 0$$ for ACI ≤ 25 (physics fallback, P9) and $$g \equiv 1$$ for ACI ≥ 80 (full trust, P10). The gated predictor is wrapped in Mondrian split-conformal intervals using a **three-block chronological split (gate → calibration → test)**: the gate weight is a measurable function of the gate block only, so the finite-sample coverage guarantee provably survives the gating (P7 — *coverage preservation*, the paper's one theorem-level result). Evaluated against three baselines on the same held-out block: physics-only (w=0), always-correct (w=1), and the crisp hard-switch. **No published PV framework couples a fuzzy attribution-trust signal to a conformal prediction wrapper as a convex correction gain.**
+
 ### Contribution C5 — Honest dual-mode validation on metered generation
 - **Measured mode:** residual = real DKASC metered power − physics model on on-site weather (genuine ground truth), chronological train/test split, train-only baseline calibration (no leakage).
 - **Cross-source mode:** NASA-POWER-driven vs Open-Meteo-driven physics (model-consistency residual) — used transparently as a *secondary* robustness check, never conflated with measured validation.
@@ -95,7 +105,8 @@ The CRISP layer (Mondrian split-conformal intervals, regimes indexed by the very
 | Quantifies confidence *in the attribution* | ❌ | ❌ | ❌ | ❌ | ✅ **ACI (0–100)** |
 | Anti-leakage encoded in inference | ❌ | ❌ | ❌ | ❌ | ✅ **Gate 1** |
 | Physical sign-consistency check | ❌ | ❌ | ❌ | ❌ | ✅ **Gate 2** |
-| Formal properties proved | ❌ | ❌ | ❌ | partial (coverage) | ✅ **P1–P6** |
+| Formal properties proved | ❌ | ❌ | ❌ | partial (coverage) | ✅ **P1–P10, runnable suite** |
+| Confidence-gated correction w/ coverage guarantee | ❌ | ❌ | ❌ | ❌ | ✅ **ACGC** |
 | Metered-generation validation | rare | rare | some | some | ✅ DKASC |
 | Regime-conditional coverage | ❌ | ❌ | ❌ | partial | ✅ Mondrian CRISP |
 | Auditable rule trace | partial | ❌ | ❌ | ❌ | ✅ |
@@ -104,9 +115,9 @@ The CRISP layer (Mondrian split-conformal intervals, regimes indexed by the very
 
 ## 5. What to Add to Reach Q2 (concrete action list)
 
-The codebase already implements C1, C2, C4, C5. To make the paper referee-proof:
+The codebase already implements C1, C2, C4, C5, C6. To make the paper referee-proof:
 
-1. **Formal-properties script** (`validate_facl_properties.py`): numerically verify P2 (continuity — max jump on a dense grid → 0 with grid refinement), P5 (monotonicity — no negative finite differences outside the suspicious region), P6 (bounded breakpoint sensitivity). Report as a properties table. *(Small effort, large reviewer impact.)*
+1. **Formal-properties script — DONE** (`validate_formal_properties.py`): numerically verifies all ten properties P1–P10 (12/12 checks pass). Report as a properties table. **Bonus result for the paper:** the suite *caught two real implementation defects* — (i) an empty-rule-base region above R² ≈ 0.84 where the ACI cliff-dropped to 0, fixed with a graded "suspicious → low" support rule; (ii) a shoulder-trapezoid membership function that returned 0 instead of 1 at the exact universe boundary. Reporting this ("the formal characterisation found and fixed defects a purely empirical evaluation would have missed") is itself a strong argument for Gap G6.
 2. **Ablation study:** ACI with (a) no gates, (b) Gate 1 only, (c) Gate 2 only, (d) full FACL — on the same DKASC runs. Show gates change verdicts in exactly the physically-correct cases.
 3. **Baseline comparisons:** (i) legacy crisp classifier, (ii) a logistic-regression "confidence" trained on the same four diagnostics (shows fuzzy transparency ≠ accuracy loss), (iii) raw SHAP rank stability under bootstrap (shows why a confidence layer is needed at all).
 4. **Bootstrap robustness:** resample the test block (block bootstrap, preserves autocorrelation) → distribution of ACI; show the crisp tier flips across bootstrap replicates while the ACI varies smoothly. *This is the killer figure for G5.*
