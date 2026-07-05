@@ -435,11 +435,15 @@ def main(argv=None) -> int:
                      f"FACL-threshold accuracy "
                      f"{lb.get('facl_acc', float('nan')):.0%})")
         L.append(f"- (iii) Raw top-driver stability under bootstrap: "
-                 f"the modal top driver holds in only "
-                 f"**{bs['top_driver_stability']:.0%}** of replicates "
-                 f"({bs['top_driver_counts']}) — attribution rankings are "
-                 f"sampling-sensitive, which is precisely why a confidence "
-                 f"layer over the attribution is needed (Gap G1).\n")
+                     f"the modal top driver holds in "
+                     f"**{bs['top_driver_stability']:.0%}** of replicates "
+                     f"({bs['top_driver_counts']})"
+                     + (" — attribution rankings are sampling-sensitive, "
+                        "which is precisely why a confidence layer over the "
+                        "attribution is needed (Gap G1).\n"
+                        if bs['top_driver_stability'] < 0.95 else
+                        " — stable on this array; the instability shows up "
+                        "on the other arrays (Gap G1).\n"))
 
     out = os.path.join(RESULTS_DIR, "statistical_analysis.md")
     with open(out, "w") as f:

@@ -75,10 +75,21 @@ Changing any sidebar input invalidates only what depends on it.
 - `python run_facl_validation.py` — PRAM + FACL on the real DKASC CSV.
 - `python run_crisp_validation.py` — CRISP conformal coverage on DKASC.
 - `python validate_formal_properties.py` — numerical verification of P1–P13.
-- `python run_dkasc_experiments.py` — **the pre-submission experiment**: full
-  PRAM → FACL → ACGC → RCA stack on a real DKASC export; writes the paper's
-  headline tables to `results/dkasc_results.md` (+ CSVs). Use
-  `--list-channels` to pick an array, `--channel N` to select it.
+- `python fetch_dkasc_mirror.py --array 1A|1C|3A|4A` — downloads real Alice
+  Springs metered data from a public GitHub mirror (the official DKASC server
+  returns HTTP 500) into `data/dkasc_<ARRAY>.csv`.
+- `python run_dkasc_experiments.py --csv data/dkasc_1A.csv --tag 1A` — **the
+  pre-submission experiment**: full PRAM → FACL → ACGC → RCA stack on a real
+  DKASC export; writes the paper's headline tables to
+  `results/dkasc_results_<TAG>.md` (+ CSVs). Use `--list-channels` to pick an
+  array, `--channel N` to select it. Cross-array summary:
+  `results/dkasc_multi_array_summary.md`.
+- `python run_statistical_analysis.py` — **referee-proofing statistics** on
+  the same arrays: gate ablation (none / G1 / G2 / full), moving-block
+  bootstrap of the ACI (crisp-tier flips vs smooth ACI — the G5 figure),
+  Diebold–Mariano significance (physics vs corrected, HLN-corrected), and a
+  logistic-confidence baseline on the same four diagnostics. Writes
+  `results/statistical_analysis.md` (+ `aci_bootstrap_<ARRAY>.csv`).
 
 ---
 
@@ -330,3 +341,7 @@ against this pipeline's estimate, and reports the agreement percentage
 | Regime-conditional attribution module | `src/rca.py` |
 | Headless pipeline | `run_pipeline.py` |
 | Real-data harnesses | `run_facl_validation.py`, `run_crisp_validation.py` |
+| DKASC data fetcher (mirror) | `fetch_dkasc_mirror.py` |
+| Pre-submission experiment harness | `run_dkasc_experiments.py` |
+| Referee-proofing statistics | `run_statistical_analysis.py` |
+| Real-data results | `results/dkasc_multi_array_summary.md`, `results/statistical_analysis.md` |
